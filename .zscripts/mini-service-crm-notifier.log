@@ -1,0 +1,14 @@
+[crm-notifier] Installing dependencies...
+bun install v1.3.10 (30e609e0)
+Resolving dependencies
+Resolved, downloaded and extracted [80]
+Saved lockfile
+
++ socket.io@4.8.3
+
+22 packages installed [261.00ms]
+[crm-notifier] Running bun run dev...
+$ bun --hot index.ts
+[WS] OMNI-CRM WebSocket Service running on port 3003
+[WS] WebSocket path: /socket.io/
+[WS] API endpoint: http://localhost:3003/

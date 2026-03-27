@@ -1,0 +1,1695 @@
+// ============================================
+// OMNI-CRM: Tier-1 Forex Brokerage System
+// Database Schema - Prisma ORM
+// ============================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// 1. USERS & AUTHENTICATION MODULE
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  name          String
+  phone         String?
+  avatar        String?
+  userType      UserType  @default(CLIENT)
+  status        UserStatus @default(PENDING)
+  
+  // Relations
+  role          Role?     @relation(fields: [roleId], references: [id])
+  roleId        String?
+  
+  devices       Device[]
+  sessions      Session[]
+  
+  // Client specific
+  clientProfile ClientProfile?
+  wallets       Wallet[]
+  accounts      TradingAccount[]
+  documents     KYCDocument[]
+  notifications Notification[]
+  tasksAssigned Task[]       @relation("AssignedTasks")
+  tasksCreated  Task[]       @relation("CreatedTasks")
+  
+  // IB specific
+  ibProfile           IBProfile?
+  ibReferrals         IBReferral[]      @relation("IBReferrals")
+  referredBy          IBReferral?       @relation("ReferrerIB")
+  commissions         Commission[]
+  ibTradingAccounts   TradingAccount[]  @relation("IBTradingAccounts")
+  
+  // Audit
+  auditLogs     AuditLog[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
+  
+  @@index([email])
+  @@index([userType])
+  @@index([status])
+}
+
+model Role {
+  id          String      @id @default(cuid())
+  name        String      @unique
+  displayName String
+  description String?
+  level       Int         @default(0) // Higher = more permissions
+  
+  users       User[]
+  permissions Permission[]
+  
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  
+  @@index([name])
+}
+
+model Permission {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  module      String    // e.g., "tasks", "transactions", "clients"
+  action      String    // e.g., "create", "read", "update", "delete", "approve"
+  description String?
+  
+  roles       Role[]
+  
+  createdAt   DateTime  @default(now())
+  
+  @@unique([module, action])
+  @@index([module])
+}
+
+model Device {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Hardware Fingerprint
+  hardwareId    String      @unique // Unique device fingerprint
+  deviceName    String?
+  deviceType    String?     // desktop, mobile, tablet
+  osType        String?     // Windows, macOS, iOS, Android
+  browserType   String?
+  
+  // Validation
+  status        DeviceStatus @default(PENDING)
+  approvedAt    DateTime?
+  approvedBy    String?
+  
+  // Security
+  lastUsedAt    DateTime?
+  lastIP        String?
+  userAgent     String?
+  
+  sessions      Session[]
+  
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  @@index([userId])
+  @@index([hardwareId])
+  @@index([status])
+}
+
+model Session {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId    String
+  device      Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  
+  token       String    @unique
+  refreshToken String   @unique
+  expiresAt   DateTime
+  
+  ipAddress   String?
+  userAgent   String?
+  
+  isActive    Boolean   @default(true)
+  
+  createdAt   DateTime  @default(now())
+  
+  @@index([userId])
+  @@index([token])
+  @@index([refreshToken])
+}
+
+// ============================================
+// 2. CLIENT PROFILE MODULE
+// ============================================
+
+model ClientProfile {
+  id              String        @id @default(cuid())
+  userId          String        @unique
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Personal Info
+  firstName       String
+  lastName        String
+  dateOfBirth     DateTime?
+  nationality     String?
+  country         String?
+  city            String?
+  address         String?
+  postalCode      String?
+  
+  // KYC Status
+  kycStatus       KYCStatus     @default(PENDING)
+  kycLevel        Int           @default(0) // 0 = not started, 1 = basic, 2 = full
+  kycSubmittedAt  DateTime?
+  kycApprovedAt   DateTime?
+  kycRejectedAt   DateTime?
+  kycRejectionReason String?
+  
+  // Risk Profile
+  riskLevel       RiskLevel     @default(MEDIUM)
+  riskScore       Int           @default(50) // 0-100
+  
+  // Trading Preferences
+  preferredLeverage Int         @default(100)
+  accountType     AccountType   @default(STANDARD)
+  
+  // A-Book/B-Book Classification
+  bookingType     BookingType   @default(B_BOOK)
+  
+  // MT4/MT5 Integration
+  mtAccountId     String?
+  mtGroup         String?
+  mtLeverage      Int?
+  
+  // Compliance
+  pepStatus       Boolean       @default(false) // Politically Exposed Person
+  sanctionCheck   Boolean       @default(false)
+  lastComplianceCheck DateTime?
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  @@index([kycStatus])
+  @@index([country])
+}
+
+model KYCDocument {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  documentType    DocumentType
+  documentNumber  String?
+  
+  // Files
+  frontImage      String        // URL to file
+  backImage       String?
+  selfieImage     String?
+  
+  // Verification
+  status          DocumentStatus @default(PENDING)
+  verifiedAt      DateTime?
+  verifiedBy      String?
+  rejectionReason String?
+  
+  // OCR Data
+  extractedData   String?       // JSON
+  
+  // Expiry
+  issueDate       DateTime?
+  expiryDate      DateTime?
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  @@index([userId])
+  @@index([documentType])
+  @@index([status])
+}
+
+// ============================================
+// 3. WALLETS & TRADING ACCOUNTS MODULE
+// ============================================
+
+model Wallet {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  walletType      WalletType
+  currency        String        // USD, EUR, BTC, ETH, etc.
+  balance         Float         @default(0)
+  frozenBalance   Float         @default(0) // Locked for pending transactions
+  
+  // Status
+  status          WalletStatus  @default(ACTIVE)
+  
+  // Relations
+  outgoingTransactions Transaction[] @relation("OutgoingTransactions")
+  incomingTransactions Transaction[] @relation("IncomingTransactions")
+  
+  // Audit
+  lastBalanceUpdate DateTime?
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  @@unique([userId, walletType, currency])
+  @@index([userId])
+  @@index([currency])
+}
+
+model TradingAccount {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // MT4/MT5 Info
+  mtAccountId     String        @unique
+  mtPassword      String        // Encrypted
+  mtServer        String
+  mtGroup         String
+  
+  // Account Details
+  accountType     AccountType   @default(STANDARD)
+  currency        String        @default("USD")
+  leverage        Int           @default(100)
+  
+  // Balances
+  balance         Float         @default(0)
+  equity          Float         @default(0)
+  margin          Float         @default(0)
+  freeMargin      Float         @default(0)
+  marginLevel     Float         @default(0)
+  
+  // Trading Stats
+  totalDeposits   Float         @default(0)
+  totalWithdrawals Float        @default(0)
+  totalVolume     Float         @default(0) // In lots
+  totalProfit     Float         @default(0)
+  totalTrades     Int           @default(0)
+  
+  // A-Book/B-Book
+  bookingType     BookingType   @default(B_BOOK)
+  
+  // Status
+  status          AccountStatus @default(ACTIVE)
+  
+  // IB
+  ibId            String?       // Introducing Broker (User.id)
+  ib              User?         @relation("IBTradingAccounts", fields: [ibId], references: [id], onDelete: SetNull)
+  
+  // Sync
+  lastSyncAt      DateTime?
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  @@index([userId])
+  @@index([mtAccountId])
+  @@index([status])
+}
+
+// ============================================
+// 4. TRANSACTIONS MODULE
+// ============================================
+
+model Transaction {
+  id              String          @id @default(cuid())
+  
+  // References
+  userId          String
+  fromWalletId    String?
+  toWalletId      String?
+  
+  fromWallet      Wallet?         @relation("OutgoingTransactions", fields: [fromWalletId], references: [id])
+  toWallet        Wallet?         @relation("IncomingTransactions", fields: [toWalletId], references: [id])
+  
+  // Transaction Details
+  type            TransactionType
+  amount          Float
+  currency        String
+  fee             Float           @default(0)
+  netAmount       Float           // amount - fee or amount + fee
+  
+  // For transfers
+  fromCurrency    String?
+  toCurrency      String?
+  exchangeRate    Float?
+  
+  // Status
+  status          TransactionStatus @default(PENDING)
+  
+  // Payment Info
+  paymentMethod   String?
+  paymentReference String?
+  paymentProvider String?
+  
+  // MT4/MT5 Integration
+  mtOrderId       String?
+  mtTicket        String?
+  
+  // Approval
+  approvedAt      DateTime?
+  approvedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  
+  // Crypto
+  cryptoAddress   String?
+  cryptoTxHash    String?
+  cryptoNetwork   String?
+  
+  // Description
+  description     String?
+  metadata        String?         // JSON for extra data
+  
+  // Audit - IMMUTABLE
+  auditTrail      AuditLog[]
+  
+  createdAt       DateTime        @default(now())
+  processedAt     DateTime?
+  
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================
+// 5. TASK MANAGEMENT MODULE
+// ============================================
+
+model Task {
+  id              String        @id @default(cuid())
+  
+  // Task Info
+  title           String
+  description     String?
+  category        TaskCategory
+  
+  // Priority & Scoring
+  priority        Priority      @default(MEDIUM)
+  priorityScore   Int           @default(50) // 0-100 calculated score
+  
+  // Assignment
+  creatorId       String
+  creator         User          @relation("CreatedTasks", fields: [creatorId], references: [id])
+  assigneeId      String?
+  assignee        User?         @relation("AssignedTasks", fields: [assigneeId], references: [id])
+  
+  // Source
+  platformSource  PlatformSource @default(WEB)
+  sourceReference String?       // e.g., ticket ID, chat ID
+  
+  // SLA
+  slaMinutes      Int           @default(60) // Response time in minutes
+  slaDeadline     DateTime?
+  slaBreached     Boolean       @default(false)
+  
+  // Status
+  status          TaskStatus    @default(NEW)
+  
+  // Related Entity
+  entityType      String?       // "transaction", "client", "kyc", etc.
+  entityId        String?
+  
+  // Time Tracking
+  startedAt       DateTime?
+  completedAt     DateTime?
+  
+  // Comments
+  comments        TaskComment[]
+  
+  // Audit
+  auditLogs       AuditLog[]
+  
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  
+  @@index([status])
+  @@index([category])
+  @@index([priority])
+  @@index([assigneeId])
+  @@index([slaDeadline])
+  @@index([createdAt])
+}
+
+model TaskComment {
+  id          String    @id @default(cuid())
+  taskId      String
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  
+  userId      String
+  content     String
+  
+  isInternal  Boolean   @default(false) // Internal note vs client visible
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@index([taskId])
+}
+
+// ============================================
+// 6. IB (INTRODUCING BROKER) MODULE
+// ============================================
+
+model IBProfile {
+  id              String      @id @default(cuid())
+  userId          String      @unique
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // IB Details
+  ibCode          String      @unique // Unique referral code
+  ibLevel         Int         @default(1) // 1-5 levels
+  
+  // Parent IB (for multi-level)
+  parentIbId      String?
+  parentIb        IBProfile?  @relation("IBHierarchy", fields: [parentIbId], references: [id])
+  children        IBProfile[] @relation("IBHierarchy")
+  
+  // Statistics
+  totalClients    Int         @default(0)
+  activeClients   Int         @default(0)
+  totalVolume     Float       @default(0) // In lots
+  totalCommission Float       @default(0)
+  
+  // Status
+  status          IBStatus    @default(PENDING)
+  approvedAt      DateTime?
+  approvedBy      String?
+  
+  // Commission Settings
+  commissionPlan  String?     // Link to commission plan
+  
+  // Marketing
+  referralLinks   ReferralLink[]
+  banners         Banner[]
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([ibCode])
+  @@index([status])
+}
+
+model IBReferral {
+  id              String    @id @default(cuid())
+  
+  // The client being referred
+  clientId        String    @unique
+  client          User      @relation("ReferrerIB", fields: [clientId], references: [id], onDelete: Cascade)
+  
+  // The IB who referred them
+  ibId            String
+  ib              User      @relation("IBReferrals", fields: [ibId], references: [id])
+  
+  // Level in the hierarchy
+  level           Int       @default(1) // 1 = direct, 2 = 2nd level, etc.
+  
+  // Status
+  status          String    @default("active")
+  
+  // Attribution
+  referralLinkId  String?
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([ibId])
+  @@index([clientId])
+}
+
+model Commission {
+  id              String        @id @default(cuid())
+  
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  
+  // Source
+  sourceType      String        // "trade", "deposit", "spread"
+  sourceId        String?       // Trade ID or Transaction ID
+  
+  // Client who generated the commission
+  clientId        String?
+  
+  // Amount
+  volume          Float         @default(0) // Lots traded
+  amount          Float         @default(0)
+  currency        String        @default("USD")
+  
+  // Level
+  level           Int           @default(1) // 1-5
+  
+  // Status
+  status          CommissionStatus @default(PENDING)
+  
+  // Payment
+  paidAt          DateTime?
+  walletId        String?
+  
+  // Audit
+  auditLogs       AuditLog[]
+  
+  createdAt       DateTime      @default(now())
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model ReferralLink {
+  id              String      @id @default(cuid())
+  ibProfileId     String
+  ibProfile       IBProfile   @relation(fields: [ibProfileId], references: [id], onDelete: Cascade)
+  
+  code            String      @unique
+  name            String?
+  
+  // Tracking
+  totalClicks     Int         @default(0)
+  totalSignups    Int         @default(0)
+  totalDeposits   Float       @default(0)
+  
+  // UTM Parameters
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+  utmContent      String?
+  
+  isActive        Boolean     @default(true)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([ibProfileId])
+  @@index([code])
+}
+
+model Banner {
+  id              String      @id @default(cuid())
+  ibProfileId     String
+  ibProfile       IBProfile   @relation(fields: [ibProfileId], references: [id], onDelete: Cascade)
+  
+  name            String
+  imageUrl        String
+  targetUrl       String
+  
+  // Dimensions
+  width           Int?
+  height          Int?
+  
+  // Statistics
+  impressions     Int         @default(0)
+  clicks          Int         @default(0)
+  
+  isActive        Boolean     @default(true)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([ibProfileId])
+}
+
+// ============================================
+// 7. NOTIFICATIONS MODULE
+// ============================================
+
+model Notification {
+  id              String            @id @default(cuid())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type            NotificationType
+  title           String
+  message         String
+  
+  // Reference
+  entityType      String?
+  entityId        String?
+  
+  // Delivery
+  channels        String            // JSON array: ["email", "push", "in_app"]
+  emailSent       Boolean           @default(false)
+  pushSent        Boolean           @default(false)
+  
+  // Read Status
+  isRead          Boolean           @default(false)
+  readAt          DateTime?
+  
+  createdAt       DateTime          @default(now())
+  
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+// ============================================
+// 8. AUDIT LOG MODULE (IMMUTABLE)
+// ============================================
+
+model AuditLog {
+  id              String        @id @default(cuid())
+  
+  // Actor
+  userId          String?
+  user            User?         @relation(fields: [userId], references: [id])
+  
+  // Action
+  action          String        // CREATE, UPDATE, DELETE, APPROVE, REJECT
+  entityType      String        // User, Transaction, Task, Commission, etc.
+  entityId        String?
+  
+  // Changes
+  oldValue        String?       // JSON
+  newValue        String?       // JSON
+  
+  // Context
+  ipAddress       String?
+  userAgent       String?
+  deviceId        String?
+  
+  // Related Transaction/Commission
+  transactionId   String?
+  transaction     Transaction?  @relation(fields: [transactionId], references: [id])
+  commissionId    String?
+  commission      Commission?   @relation(fields: [commissionId], references: [id])
+  taskId          String?
+  task            Task?         @relation(fields: [taskId], references: [id])
+  
+  // Timestamp - IMMUTABLE
+  createdAt       DateTime      @default(now())
+  
+  @@index([userId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+// ============================================
+// 9. SETTINGS MODULE
+// ============================================
+
+model Setting {
+  id              String    @id @default(cuid())
+  key             String    @unique
+  value           String    // JSON
+  
+  category        String    // "system", "trading", "payment", "kyc"
+  description     String?
+  
+  isEncrypted     Boolean   @default(false)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([key])
+  @@index([category])
+}
+
+// ============================================
+// 10. ANALYTICS & REPORTING
+// ============================================
+
+model DailyStat {
+  id              String    @id @default(cuid())
+  date            DateTime  @unique
+  
+  // Users
+  newUsers        Int       @default(0)
+  activeUsers     Int       @default(0)
+  
+  // Trading
+  totalVolume     Float     @default(0)
+  totalTrades     Int       @default(0)
+  
+  // Transactions
+  totalDeposits   Float     @default(0)
+  totalWithdrawals Float   @default(0)
+  depositCount    Int       @default(0)
+  withdrawalCount Int       @default(0)
+  
+  // IB
+  newIBs          Int       @default(0)
+  totalCommission Float     @default(0)
+  
+  // A-Book/B-Book
+  aBookVolume     Float     @default(0)
+  bBookVolume     Float     @default(0)
+  
+  // Revenue
+  grossRevenue    Float     @default(0)
+  netRevenue      Float     @default(0)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([date])
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum UserType {
+  ADMIN
+  STAFF
+  CLIENT
+  IB
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  BANNED
+  DELETED
+}
+
+enum DeviceStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVOKED
+}
+
+enum KYCStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  VERY_HIGH
+}
+
+enum AccountType {
+  STANDARD
+  ECN
+  ISLAMIC
+  VIP
+  DEMO
+}
+
+enum BookingType {
+  A_BOOK
+  B_BOOK
+  HYBRID
+}
+
+enum DocumentType {
+  PASSPORT
+  NATIONAL_ID
+  DRIVERS_LICENSE
+  UTILITY_BILL
+  BANK_STATEMENT
+  SELFIE
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum WalletType {
+  INTERNAL    // Main wallet
+  TRADING     // Trading account wallet
+  IB          // IB commission wallet
+  BONUS       // Bonus wallet
+  MARGIN      // Margin wallet
+}
+
+enum WalletStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum AccountStatus {
+  ACTIVE
+  INACTIVE
+  FROZEN
+  CLOSED
+  DEMO
+}
+
+enum TransactionType {
+  DEPOSIT
+  WITHDRAWAL
+  INTERNAL_TRANSFER
+  TRADE
+  COMMISSION
+  BONUS
+  ADJUSTMENT
+  FEE
+  SWAP
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+  REJECTED
+}
+
+enum TaskCategory {
+  KYC_VERIFICATION
+  DEPOSIT
+  WITHDRAWAL
+  ACCOUNT_OPENING
+  SUPPORT
+  COMPLAINT
+  COMPLIANCE
+  OTHER
+}
+
+enum Priority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum PlatformSource {
+  WEB
+  MOBILE_APP
+  MT4
+  MT5
+  API
+  EMAIL
+  CHAT
+  PHONE
+}
+
+enum TaskStatus {
+  NEW
+  OPEN
+  IN_PROGRESS
+  PENDING_INFO
+  ESCALATED
+  RESOLVED
+  CLOSED
+  CANCELLED
+}
+
+enum IBStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELLED
+}
+
+enum NotificationType {
+  DEPOSIT
+  WITHDRAWAL
+  TRADE
+  KYC
+  TASK
+  COMMISSION
+  SYSTEM
+  SECURITY
+  MARKETING
+}
+
+// ============================================
+// 11. NOTIFICATION TEMPLATES MODULE
+// ============================================
+
+model NotificationTemplate {
+  id              String    @id @default(cuid())
+  name            String    @unique
+  type            NotificationType
+  channel         String    // email, sms, push, in_app
+  
+  // Content
+  subject         String?   // For email
+  title           String    // For push/in_app
+  body            String    // Template with {{variables}}
+  htmlContent     String?   // For email HTML
+  
+  // Variables
+  variables       String?   // JSON array of variable names
+  
+  // Status
+  isActive        Boolean   @default(true)
+  
+  // Localization
+  language        String    @default("en")
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@unique([name, language])
+  @@index([type])
+  @@index([channel])
+}
+
+// ============================================
+// 12. MARKETING CAMPAIGNS MODULE
+// ============================================
+
+model MarketingCampaign {
+  id              String    @id @default(cuid())
+  name            String
+  type            CampaignType
+  
+  // Content
+  subject         String?
+  content         String
+  htmlContent     String?
+  templateId      String?
+  
+  // Targeting
+  targetAudience  String    // JSON: {countries: [], accountTypes: [], etc}
+  segmentId       String?
+  
+  // Schedule
+  scheduledAt     DateTime?
+  sentAt          DateTime?
+  
+  // Statistics
+  totalRecipients Int       @default(0)
+  sentCount       Int       @default(0)
+  openCount       Int       @default(0)
+  clickCount      Int       @default(0)
+  bounceCount     Int       @default(0)
+  unsubscribeCount Int      @default(0)
+  
+  // A/B Testing
+  abTestId        String?
+  abVariant       String?   // A, B, C
+  
+  // Status
+  status          CampaignStatus @default(DRAFT)
+  
+  // Creator
+  createdById     String?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([status])
+  @@index([type])
+  @@index([scheduledAt])
+}
+
+model MarketingSegment {
+  id              String    @id @default(cuid())
+  name            String
+  description     String?
+  
+  // Criteria
+  criteria        String    // JSON: filters and rules
+  
+  // Statistics
+  memberCount     Int       @default(0)
+  lastCalculated  DateTime?
+  
+  isActive        Boolean   @default(true)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([name])
+}
+
+model EmailTemplate {
+  id              String    @id @default(cuid())
+  name            String    @unique
+  subject         String
+  htmlContent     String
+  textContent     String?
+  
+  // Variables
+  variables       String?   // JSON array
+  
+  isActive        Boolean   @default(true)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([name])
+}
+
+// ============================================
+// 13. LOYALTY & BONUS PROGRAM MODULE
+// ============================================
+
+model LoyaltyProgram {
+  id              String    @id @default(cuid())
+  name            String
+  description     String?
+  
+  // Points
+  pointsPerDeposit     Float   @default(0)
+  pointsPerTrade       Float   @default(0)
+  pointsPerVolume      Float   @default(0) // per lot
+  
+  // Levels
+  levels          String    // JSON: [{name, minPoints, benefits}]
+  
+  // Rewards
+  rewards         String?   // JSON: available rewards
+  
+  isActive        Boolean   @default(true)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([name])
+}
+
+model LoyaltyAccount {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  
+  // Points
+  totalPoints     Int       @default(0)
+  availablePoints Int       @default(0)
+  usedPoints      Int       @default(0)
+  
+  // Level
+  currentLevel    String    @default("Bronze")
+  levelProgress   Int       @default(0) // percentage to next level
+  
+  // Statistics
+  totalEarned     Int       @default(0)
+  totalRedeemed   Int       @default(0)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([userId])
+  @@index([currentLevel])
+}
+
+model LoyaltyTransaction {
+  id              String    @id @default(cuid())
+  accountId       String
+  
+  // Transaction
+  type            LoyaltyTransactionType
+  points          Int
+  description     String
+  
+  // Source
+  sourceType      String?   // deposit, trade, referral, bonus
+  sourceId        String?
+  
+  balanceAfter    Int
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([accountId])
+  @@index([type])
+}
+
+model Bonus {
+  id              String    @id @default(cuid())
+  userId          String
+  
+  // Bonus Details
+  name            String
+  type            BonusType
+  amount          Float
+  currency        String    @default("USD")
+  
+  // Conditions
+  volumeRequired  Float     @default(0) // lots to unlock
+  timeLimit       Int?      // days
+  
+  // Progress
+  volumeTraded    Float     @default(0)
+  isUnlocked      Boolean   @default(false)
+  unlockedAt      DateTime?
+  
+  // Status
+  status          BonusStatus @default(ACTIVE)
+  expiresAt       DateTime?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+}
+
+model ReferralProgram {
+  id              String    @id @default(cuid())
+  name            String
+  
+  // Rewards
+  referrerReward  Float     @default(0)
+  refereeReward   Float     @default(0)
+  rewardType      String    @default("cash") // cash, points, bonus
+  
+  // Rules
+  minDeposit      Float     @default(0)
+  maxRewards      Float?
+  
+  isActive        Boolean   @default(true)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([name])
+}
+
+// ============================================
+// 14. SUPPORT TICKET SYSTEM MODULE
+// ============================================
+
+model SupportTicket {
+  id              String    @id @default(cuid())
+  ticketNumber    String    @unique
+  
+  // Client
+  userId          String
+  
+  // Ticket Info
+  subject         String
+  category        TicketCategory
+  priority        Priority  @default(MEDIUM)
+  
+  // Assignment
+  assignedToId    String?
+  departmentId    String?
+  
+  // Status
+  status          TicketStatus @default(OPEN)
+  
+  // SLA
+  slaMinutes      Int       @default(480) // 8 hours
+  slaDeadline     DateTime?
+  slaBreached     Boolean   @default(false)
+  
+  // Messages
+  messages        TicketMessage[]
+  
+  // Rating
+  rating          Int?      // 1-5
+  feedback        String?
+  ratedAt         DateTime?
+  
+  // Time Tracking
+  firstResponseAt DateTime?
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+  @@index([assignedToId])
+  @@index([createdAt])
+}
+
+model TicketMessage {
+  id              String    @id @default(cuid())
+  ticketId        String
+  ticket          SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  
+  // Sender
+  senderId        String
+  senderType      String    // client, staff, system
+  
+  // Content
+  content         String
+  attachments     String?   // JSON array of file URLs
+  
+  // Internal
+  isInternal      Boolean   @default(false)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([ticketId])
+}
+
+model TicketDepartment {
+  id              String    @id @default(cuid())
+  name            String
+  description     String?
+  
+  // Email
+  email           String?
+  
+  // SLA
+  defaultSla      Int       @default(480)
+  
+  // Assignment
+  autoAssign      Boolean   @default(false)
+  
+  isActive        Boolean   @default(true)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([name])
+}
+
+model KnowledgeBaseArticle {
+  id              String    @id @default(cuid())
+  title           String
+  slug            String    @unique
+  content         String
+  
+  // Category
+  categoryId      String?
+  
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+  
+  // Statistics
+  views           Int       @default(0)
+  helpfulYes      Int       @default(0)
+  helpfulNo       Int       @default(0)
+  
+  // Status
+  isPublished     Boolean   @default(false)
+  publishedAt     DateTime?
+  
+  // Author
+  authorId        String?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([slug])
+  @@index([categoryId])
+  @@index([isPublished])
+}
+
+// ============================================
+// 15. CALENDAR & EVENTS MODULE
+// ============================================
+
+model CalendarEvent {
+  id              String    @id @default(cuid())
+  title           String
+  description     String?
+  
+  // Type
+  type            EventType
+  color           String    @default("#3b82f6")
+  
+  // Timing
+  startAt         DateTime
+  endAt           DateTime?
+  isAllDay        Boolean   @default(false)
+  timezone        String    @default("UTC")
+  
+  // Recurrence
+  isRecurring     Boolean   @default(false)
+  recurrenceRule  String?   // RRULE format
+  
+  // Organizer
+  organizerId     String
+  
+  // Attendees
+  attendees       EventAttendee[]
+  
+  // Reminders
+  reminders       String?   // JSON: [{minutes, type}]
+  
+  // Related Entity
+  entityType      String?
+  entityId        String?
+  
+  // Google Calendar Sync
+  googleEventId   String?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([startAt])
+  @@index([organizerId])
+  @@index([type])
+}
+
+model EventAttendee {
+  id              String    @id @default(cuid())
+  eventId         String
+  event           CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  
+  userId          String
+  responseStatus  String    @default("pending") // pending, accepted, declined, tentative
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@unique([eventId, userId])
+  @@index([eventId])
+  @@index([userId])
+}
+
+// ============================================
+// 16. DISPUTE MANAGEMENT MODULE
+// ============================================
+
+model Dispute {
+  id              String    @id @default(cuid())
+  caseNumber      String    @unique
+  
+  // Parties
+  clientId        String
+  againstType     String    // broker, staff, ib
+  againstId       String?
+  
+  // Dispute Info
+  title           String
+  description     String
+  category        DisputeCategory
+  amount          Float?
+  currency        String?
+  
+  // Evidence
+  evidence        String?   // JSON array of documents
+  
+  // Status
+  status          DisputeStatus @default(OPEN)
+  
+  // Resolution
+  resolution      String?
+  resolutionType  String?   // refund, compensation, rejected, resolved
+  resolvedAt      DateTime?
+  resolvedById    String?
+  
+  // Timeline
+  messages        DisputeMessage[]
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([clientId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model DisputeMessage {
+  id              String    @id @default(cuid())
+  disputeId       String
+  dispute         Dispute   @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+  
+  senderId        String
+  senderType      String    // client, staff, system
+  
+  content         String
+  attachments     String?   // JSON array
+  
+  isInternal      Boolean   @default(false)
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([disputeId])
+}
+
+// ============================================
+// 17. ACTIVITY TIMELINE MODULE
+// ============================================
+
+model ActivityLog {
+  id              String    @id @default(cuid())
+  
+  // Actor
+  userId          String?
+  userName        String?
+  
+  // Action
+  action          String
+  entityType      String
+  entityId        String?
+  
+  // Description
+  title           String
+  description     String?
+  
+  // Metadata
+  metadata        String?   // JSON
+  
+  // Context
+  ipAddress       String?
+  userAgent       String?
+  
+  // Visibility
+  isPublic        Boolean   @default(true)
+  
+  createdAt       DateTime  @default(now())
+  
+  @@index([userId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([createdAt])
+}
+
+// ============================================
+// 18. LOCALIZATION MODULE
+// ============================================
+
+model Language {
+  id              String    @id @default(cuid())
+  code            String    @unique // en, ar, fr, etc.
+  name            String
+  nativeName      String
+  
+  // Settings
+  isRtl           Boolean   @default(false)
+  isDefault       Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([code])
+}
+
+model Translation {
+  id              String    @id @default(cuid())
+  languageCode    String
+  
+  // Key
+  namespace       String    @default("common") // common, dashboard, etc.
+  key             String
+  
+  // Value
+  value           String
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@unique([languageCode, namespace, key])
+  @@index([languageCode])
+  @@index([namespace])
+}
+
+// ============================================
+// 19. COMPLIANCE MODULE
+// ============================================
+
+model ComplianceCheck {
+  id              String    @id @default(cuid())
+  userId          String
+  
+  // Check Type
+  type            ComplianceCheckType
+  provider        String?   // ComplyAdvantage, Jumio, etc.
+  
+  // Result
+  status          ComplianceCheckStatus @default(PENDING)
+  result          String?   // JSON: detailed results
+  
+  // Risk
+  riskScore       Int?
+  riskLevel       String?
+  
+  // Matches
+  matches         String?   // JSON: watchlist matches
+  
+  // Reference
+  externalRef     String?
+  
+  // Validity
+  validUntil      DateTime?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+}
+
+model ComplianceAlert {
+  id              String    @id @default(cuid())
+  
+  // Related Check
+  checkId         String?
+  
+  // Alert Info
+  type            String
+  severity        String    // low, medium, high, critical
+  title           String
+  description     String
+  
+  // Entity
+  entityType      String
+  entityId        String
+  
+  // Status
+  status          String    @default("open") // open, acknowledged, resolved, false_positive
+  acknowledgedAt  DateTime?
+  resolvedAt      DateTime?
+  resolvedBy      String?
+  resolution      String?
+  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@index([entityType])
+  @@index([entityId])
+  @@index([status])
+  @@index([severity])
+}
+
+// ============================================
+// ADDITIONAL ENUMS
+// ============================================
+
+enum CampaignType {
+  EMAIL
+  SMS
+  PUSH
+  IN_APP
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  CANCELLED
+  FAILED
+}
+
+enum LoyaltyTransactionType {
+  EARN
+  REDEEM
+  EXPIRE
+  BONUS
+  ADJUSTMENT
+}
+
+enum BonusType {
+  DEPOSIT
+  WELCOME
+  RELOAD
+  LOYALTY
+  REFERRAL
+  PROMOTIONAL
+}
+
+enum BonusStatus {
+  ACTIVE
+  UNLOCKED
+  EXPIRED
+  CANCELLED
+}
+
+enum TicketCategory {
+  TECHNICAL
+  ACCOUNT
+  DEPOSIT
+  WITHDRAWAL
+  TRADING
+  COMPLIANCE
+  GENERAL
+  COMPLAINT
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_CLIENT
+  WAITING_INTERNAL
+  RESOLVED
+  CLOSED
+}
+
+enum EventType {
+  MEETING
+  CALL
+  REMINDER
+  DEADLINE
+  TRAINING
+  MARKETING
+  COMPLIANCE
+  OTHER
+}
+
+enum DisputeCategory {
+  DEPOSIT
+  WITHDRAWAL
+  TRADING
+  ACCOUNT
+  COMPLIANCE
+  IB_COMMISSION
+  OTHER
+}
+
+enum DisputeStatus {
+  OPEN
+  IN_REVIEW
+  ESCALATED
+  RESOLVED
+  CLOSED
+}
+
+enum ComplianceCheckType {
+  KYC
+  AML
+  PEP
+  SANCTIONS
+  ADVERSE_MEDIA
+  DOCUMENT_VERIFICATION
+}
+
+enum ComplianceCheckStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  EXPIRED
+}
