@@ -3,7 +3,7 @@
  * Double-Layer Base64 Encryption + Device Fingerprinting
  */
 
-import * as crypto from 'crypto';
+import * as crypto from 'node:crypto';
 
 // ============================================
 // ENCRYPTION CONSTANTS
